@@ -26,9 +26,6 @@ def start_api_server():
         "python", "-m", "vllm.entrypoints.openai.api_server",
         "--model", model_config["model_id"],
         "--dtype", model_config["dtype"],
-        "--max-model-len", str(vllm_config.get("max_model_len", 8192)),
-        "--gpu-memory-utilization", str(vllm_config.get("gpu_memory_utilization", 0.85)),
-        "--swap-space", str(vllm_config.get("swap_space", 4)),
         "--host", "0.0.0.0",
         "--port", "8000",
     ]

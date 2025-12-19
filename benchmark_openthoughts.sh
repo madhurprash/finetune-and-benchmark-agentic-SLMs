@@ -84,14 +84,20 @@ fi
 PYTHON_CMD=$(command_exists python3 && echo "python3" || echo "python")
 echo -e "${GREEN}✓${NC} Python found: $($PYTHON_CMD --version)"
 
-# Check for pip
-if ! command_exists pip && ! command_exists pip3; then
-    echo -e "${RED}Error: pip is not installed${NC}"
+# Check for pip or uv
+if command_exists uv; then
+    PIP_CMD="uv pip"
+    echo -e "${GREEN}✓${NC} uv found (will use for package management)"
+elif command_exists pip3; then
+    PIP_CMD="pip3"
+    echo -e "${GREEN}✓${NC} pip found"
+elif command_exists pip; then
+    PIP_CMD="pip"
+    echo -e "${GREEN}✓${NC} pip found"
+else
+    echo -e "${RED}Error: Neither pip nor uv is installed${NC}"
     exit 1
 fi
-
-PIP_CMD=$(command_exists pip3 && echo "pip3" || echo "pip")
-echo -e "${GREEN}✓${NC} pip found"
 
 # Check if vLLM API server is running
 print_header "Checking vLLM API Server"
@@ -170,61 +176,71 @@ echo ""
 RESULTS_DIR="./benchmark_results"
 mkdir -p "${RESULTS_DIR}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-RESULTS_FILE="${RESULTS_DIR}/benchmark_${AGENT_NAME}_${TIMESTAMP}.json"
+JOB_NAME="benchmark_${AGENT_NAME}_${TIMESTAMP}"
 
-echo "Results will be saved to: ${RESULTS_FILE}"
+echo "Results will be saved to: ${RESULTS_DIR}/${JOB_NAME}/"
 echo ""
 echo "Starting benchmark..."
 echo -e "${YELLOW}(This may take a while depending on dataset size)${NC}"
 echo ""
 
-# Run harbor benchmark
-# Note: The exact harbor command syntax may vary depending on the version
-# Check 'harbor --help' or 'harbor run --help' for the correct syntax
-# Common patterns include:
-#   - harbor run --dataset <dir> --agent <name> --model <model> --output <file>
-#   - harbor eval --dataset <dir> --config <config.json> --output <file>
-#
-# If the command below doesn't work, you may need to:
-# 1. Create an agent_config.json with your settings
-# 2. Use: harbor run --dataset "${LOCAL_DIR}" --config agent_config.json --output "${RESULTS_FILE}"
+# Run harbor benchmark with custom external agent
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+AGENT_PATH="nvidia_nemotron_agent:NvidiaNemotronAgent"
+
+echo "Using custom external agent:"
+echo "  Agent Path:  ${AGENT_PATH}"
+echo "  Model:       ${MODEL_NAME}"
+echo "  API Base:    ${API_BASE}"
+echo ""
 
 set +e  # Don't exit on error for the benchmark command
+# Add current directory to PYTHONPATH so harbor can import the agent
+export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH}"
 harbor run \
-    --dataset "${LOCAL_DIR}" \
-    --agent "${AGENT_NAME}" \
-    --model "${MODEL_NAME}" \
-    --api-base "${API_BASE}" \
-    --output "${RESULTS_FILE}"
+    --path "${LOCAL_DIR}" \
+    --agent-import-path "${AGENT_PATH}" \
+    --jobs-dir "${RESULTS_DIR}" \
+    --job-name "${JOB_NAME}" \
+    --n-concurrent 4
 
 BENCHMARK_EXIT_CODE=$?
 set -e  # Re-enable exit on error
 
 # Check if benchmark completed successfully
-if [ $? -eq 0 ]; then
+if [ ${BENCHMARK_EXIT_CODE} -eq 0 ]; then
     print_header "Benchmark Complete!"
     echo -e "${GREEN}✓${NC} Benchmark completed successfully"
     echo ""
-    echo "Results saved to: ${RESULTS_FILE}"
+    echo "Results saved to: ${RESULTS_DIR}/${JOB_NAME}/"
     echo ""
 
-    # Show summary if results file exists
-    if [ -f "${RESULTS_FILE}" ]; then
-        echo "Summary:"
-        if command_exists jq; then
-            jq '.' "${RESULTS_FILE}" | head -20
-        else
-            echo "Install 'jq' for formatted JSON output: sudo apt install jq"
-            head -20 "${RESULTS_FILE}"
+    # Show summary if results directory exists
+    JOB_DIR="${RESULTS_DIR}/${JOB_NAME}"
+    if [ -d "${JOB_DIR}" ]; then
+        echo "Job directory contents:"
+        ls -lh "${JOB_DIR}"
+        echo ""
+
+        # Look for summary or results files
+        if [ -f "${JOB_DIR}/summary.json" ]; then
+            echo "Summary:"
+            if command_exists jq; then
+                jq '.' "${JOB_DIR}/summary.json" | head -20
+            else
+                echo "Install 'jq' for formatted JSON output: sudo apt install jq"
+                head -20 "${JOB_DIR}/summary.json"
+            fi
         fi
     fi
 else
-    echo -e "${RED}✗${NC} Benchmark failed"
+    echo -e "${RED}✗${NC} Benchmark failed with exit code: ${BENCHMARK_EXIT_CODE}"
     exit 1
 fi
 
 print_header "Next Steps"
-echo "1. Review results in: ${RESULTS_FILE}"
+echo "1. Review results in: ${RESULTS_DIR}/${JOB_NAME}/"
 echo "2. Analyze performance metrics"
 echo "3. Compare with other models/agents"
 echo ""

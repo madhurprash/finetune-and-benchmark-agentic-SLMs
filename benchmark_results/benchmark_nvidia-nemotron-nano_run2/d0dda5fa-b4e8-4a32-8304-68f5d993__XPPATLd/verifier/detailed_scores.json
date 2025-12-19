@@ -1,0 +1,10 @@
+{
+  "total_score": 1.0,
+  "subscores": {
+    "acceptance": 1.0
+  },
+  "weights": {
+    "acceptance": 1.0
+  },
+  "feedback": "All tests passed"
+}

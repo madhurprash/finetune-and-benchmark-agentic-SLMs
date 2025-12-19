@@ -1,0 +1,12 @@
+# Benchmark results
+benchmark_results/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# OpenThoughts dataset
+openthoughts_dataset/
+*openthoughts*.json
+*openthoughts*.jsonl

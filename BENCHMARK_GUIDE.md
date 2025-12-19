@@ -113,6 +113,169 @@ Create a file called `agent_config.json`:
 
 ---
 
+## Step 4B: Using a Custom External Agent (Alternative)
+
+As an alternative to the basic agent configuration above, you can use a custom Harbor external agent that provides more control and better integration with your local vLLM server.
+
+### What is an External Agent?
+
+External agents are custom Python implementations that interface with Harbor's environment through the `BaseAgent` interface. They provide:
+- Better error handling and retry logic
+- Custom system prompts and behavior
+- Full control over model interaction
+- Iterative problem-solving capabilities
+
+### Files Created
+
+This project includes a pre-built external agent:
+
+1. **nvidia_nemotron_agent.py** - Custom agent implementation
+   - Implements Harbor's `BaseAgent` interface
+   - Connects to your local vLLM server
+   - Handles bash command execution and iteration
+
+2. **test_agent.py** - Agent testing script
+   - Verifies server connection
+   - Tests agent configuration
+
+### Testing the External Agent
+
+Before running benchmarks, test that the agent can connect to your vLLM server:
+
+```bash
+python test_agent.py
+```
+
+Expected output:
+```
+Testing NVIDIA Nemotron External Agent
+============================================================
+
+Agent Name: nvidia-nemotron-nano
+Agent Version: 1.0.0
+Model: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+API Base: http://localhost:8000/v1
+
+Testing connection to vLLM server...
+✓ Successfully connected to vLLM server
+  Available models: [...]
+```
+
+### How the External Agent Works
+
+The external agent implements a sophisticated interaction loop:
+
+1. **Initialization**: Creates an OpenAI client pointing to your local vLLM server
+2. **Task Execution**:
+   - Receives task instructions from Harbor
+   - Sends them to your model via chat completions API
+   - Extracts bash commands from model responses
+   - Executes commands using Harbor's environment
+   - Feeds results back to the model
+3. **Iteration**: Continues for up to 10 iterations or until task completion
+
+### Agent Architecture
+
+```
+┌─────────────────┐         ┌──────────────────┐         ┌─────────────────┐
+│  Harbor CLI     │────────▶│  External Agent  │────────▶│  vLLM Server    │
+│                 │         │  (nvidia_nemotron│         │  (localhost:8000)│
+│                 │         │   _agent.py)     │         │                 │
+└─────────────────┘         └──────────────────┘         └─────────────────┘
+                                     │
+                                     ▼
+                            ┌──────────────────┐
+                            │  Task Execution  │
+                            │  (Bash Commands) │
+                            └──────────────────┘
+```
+
+### Customizing the Agent
+
+You can customize the agent by editing `nvidia_nemotron_agent.py`:
+
+```python
+# Adjust initialization parameters
+agent = NvidiaNemotronAgent(
+    model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+    api_base="http://localhost:8000/v1",  # Change if using different port
+    temperature=0.1,                       # Adjust sampling temperature
+    max_tokens=8192,                       # Max tokens per response
+)
+```
+
+**System Prompt Customization**: Edit the `system_prompt` variable in the `run()` method to change how the agent approaches tasks.
+
+**Iteration Limit**: Modify `max_iterations` in the `run()` method:
+```python
+max_iterations = 20  # Increase for more complex tasks
+```
+
+### Using the External Agent with Harbor
+
+The benchmark script has been updated to automatically use the external agent. When you run:
+
+```bash
+./benchmark_openthoughts.sh
+```
+
+It will use the `--agent-import-path` parameter to load your custom agent:
+
+```bash
+harbor run \
+    --path ./openthoughts_dataset \
+    --agent-import-path nvidia_nemotron_agent.py \
+    --jobs-dir ./benchmark_results \
+    --job-name benchmark_nvidia-nemotron-nano_20241218_120000
+```
+
+### Manual Usage
+
+You can also use the external agent directly with Harbor CLI:
+
+```bash
+harbor run \
+    --path /path/to/task \
+    --agent-import-path nvidia_nemotron_agent:NvidiaNemotronAgent \
+    --jobs-dir ./results \
+    --job-name my-test-job \
+    --n-concurrent 4
+```
+
+### Advantages of External Agent
+
+Compared to the basic configuration:
+- ✅ Better error handling and recovery
+- ✅ Iterative problem-solving (multiple rounds of interaction)
+- ✅ Automatic bash command extraction and execution
+- ✅ Custom system prompts for better task performance
+- ✅ Full control over model interaction logic
+- ✅ Easier debugging and logging
+
+### Troubleshooting External Agent
+
+**Import errors**:
+```bash
+# Ensure Harbor is installed
+pip install harbor
+python -c "import harbor; print(harbor.__version__)"
+```
+
+**Agent can't connect**:
+```bash
+# Verify vLLM server is running
+curl http://localhost:8000/v1/models
+```
+
+**Module not found**:
+```bash
+# Make sure you're in the correct directory
+cd /home/ubuntu/ot-nvidia-NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+python test_agent.py
+```
+
+---
+
 ## Step 5: Run the Benchmark
 
 Now you're ready to run the benchmark!

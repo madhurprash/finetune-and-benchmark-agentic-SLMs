@@ -8,4 +8,6 @@ dependencies = [
     "vllm",
     "pyyaml",
     "zmq>=0.0.0",
+    "harbor>=0.1.25",
+    "openai",
 ]
