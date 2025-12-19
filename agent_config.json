@@ -1,8 +1,0 @@
-{
-  "agent_name": "nvidia-nemotron-nano",
-  "model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
-  "api_base": "http://localhost:8000/v1",
-  "api_type": "openai",
-  "temperature": 0.1,
-  "max_tokens": 8192
-}

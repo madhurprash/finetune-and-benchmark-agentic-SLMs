@@ -1,8 +1,9 @@
 """
-Supervised Fine-Tuning (SFT) Script for NVIDIA Nemotron-3-Nano-30B-A3B-BF16
+Supervised Fine-Tuning (SFT) Script for NVIDIA Nemotron-3-Nano-30B-A3B
+using Unsloth for efficient fine-tuning.
 
-This script fine-tunes the Nemotron model on the OpenThoughts-Agent-v1-SFT dataset
-using QLoRA for efficient training on a single GPU.
+This script loads configuration from train.yaml and fine-tunes the model
+on the OpenThoughts-Agent-v1-SFT dataset.
 
 Author: Claude
 License: Apache 2.0
@@ -10,224 +11,108 @@ License: Apache 2.0
 
 import os
 import sys
-import json
+import yaml
 import logging
-from dataclasses import dataclass, field
-from typing import Optional, Dict, List
-import torch
+from pathlib import Path
 from datasets import load_dataset
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-    TrainingArguments,
-    HfArgumentParser,
-)
-from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from unsloth import FastLanguageModel
+from trl import SFTTrainer, SFTConfig
+from unsloth.chat_templates import train_on_responses_only
 
 # Set up logging
 logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    format="%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ModelArguments:
-    """Arguments pertaining to which model/config/tokenizer we are going to fine-tune."""
-
-    model_name_or_path: str = field(
-        default="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
-    )
-    trust_remote_code: bool = field(
-        default=True,
-        metadata={"help": "Whether to trust remote code when loading the model"}
-    )
-    use_flash_attention_2: bool = field(
-        default=False,
-        metadata={"help": "Whether to use Flash Attention 2"}
-    )
+def load_config(config_path="train.yaml"):
+    """Load configuration from YAML file."""
+    logger.info(f"Loading configuration from {config_path}")
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
 
 
-@dataclass
-class DataArguments:
-    """Arguments pertaining to what data we are going to input our model for training."""
+def load_model_and_tokenizer(config):
+    """Load the model and tokenizer using FastLanguageModel."""
+    logger.info("Loading model and tokenizer...")
+    model_config = config['model']
 
-    dataset_name: str = field(
-        default="open-thoughts/OpenThoughts-Agent-v1-SFT",
-        metadata={"help": "The name of the dataset to use"}
-    )
-    dataset_config: str = field(
-        default="default",
-        metadata={"help": "The configuration name of the dataset to use"}
-    )
-    max_seq_length: int = field(
-        default=8192,
-        metadata={"help": "Maximum sequence length for training"}
-    )
-    num_train_samples: Optional[int] = field(
-        default=None,
-        metadata={"help": "Number of training samples to use (for debugging)"}
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=model_config['name'],
+        max_seq_length=model_config['max_seq_length'],
+        load_in_4bit=model_config['load_in_4bit'],
+        load_in_8bit=model_config['load_in_8bit'],
+        full_finetuning=model_config['full_finetuning'],
+        trust_remote_code=model_config['trust_remote_code'],
+        unsloth_force_compile=model_config['unsloth_force_compile'],
+        attn_implementation=model_config['attn_implementation'],
     )
 
+    logger.info("Model and tokenizer loaded successfully")
+    return model, tokenizer
 
-@dataclass
-class LoRAArguments:
-    """Arguments for LoRA configuration."""
 
-    use_lora: bool = field(
-        default=True,
-        metadata={"help": "Whether to use LoRA"}
+def apply_lora(model, config):
+    """Apply LoRA to the model if enabled."""
+    lora_config = config['lora']
+
+    if not lora_config['enabled']:
+        logger.info("LoRA is disabled, using full fine-tuning")
+        return model
+
+    logger.info("Applying LoRA configuration...")
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=lora_config['r'],
+        target_modules=lora_config['target_modules'],
+        lora_alpha=lora_config['lora_alpha'],
+        lora_dropout=lora_config['lora_dropout'],
+        bias=lora_config['bias'],
+        use_gradient_checkpointing=lora_config['use_gradient_checkpointing'],
+        random_state=lora_config['random_state'],
+        use_rslora=lora_config['use_rslora'],
+        loftq_config=None,
     )
-    lora_r: int = field(
-        default=64,
-        metadata={"help": "LoRA attention dimension"}
-    )
-    lora_alpha: int = field(
-        default=16,
-        metadata={"help": "LoRA alpha parameter"}
-    )
-    lora_dropout: float = field(
-        default=0.05,
-        metadata={"help": "LoRA dropout probability"}
-    )
-    lora_target_modules: Optional[str] = field(
-        default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
-        metadata={"help": "Comma-separated list of target modules for LoRA"}
-    )
-    use_qlora: bool = field(
-        default=True,
-        metadata={"help": "Whether to use QLoRA (4-bit quantization with LoRA)"}
-    )
+    logger.info("LoRA applied successfully")
+    return model
 
 
-def format_conversations_for_training(example: Dict) -> Dict:
-    """
-    Format the OpenThoughts dataset conversations into a single text field for training.
+def load_and_format_dataset(config, tokenizer):
+    """Load and format the dataset for training."""
+    logger.info("Loading dataset...")
+    dataset_config = config['dataset']
 
-    The dataset has conversations in the format:
-    [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
-
-    We'll format this as a chat template compatible with the model.
-    """
-    conversations = example["conversations"]
-
-    # Format the conversation using a simple template
-    # You can customize this based on the model's chat template
-    formatted_text = ""
-
-    for turn in conversations:
-        role = turn["role"]
-        content = turn["content"]
-
-        if role == "user":
-            formatted_text += f"<|user|>\n{content}\n"
-        elif role == "assistant":
-            formatted_text += f"<|assistant|>\n{content}\n"
-        elif role == "system":
-            formatted_text += f"<|system|>\n{content}\n"
-
-    # Add end of sequence token
-    formatted_text += "<|end|>"
-
-    return {"text": formatted_text}
-
-
-def create_bnb_config(use_qlora: bool = True) -> Optional[BitsAndBytesConfig]:
-    """Create BitsAndBytes configuration for 4-bit quantization."""
-    if not use_qlora:
-        return None
-
-    return BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16,
-    )
-
-
-def create_lora_config(lora_args: LoRAArguments) -> LoraConfig:
-    """Create LoRA configuration."""
-    target_modules = lora_args.lora_target_modules.split(",") if lora_args.lora_target_modules else None
-
-    return LoraConfig(
-        r=lora_args.lora_r,
-        lora_alpha=lora_args.lora_alpha,
-        target_modules=target_modules,
-        lora_dropout=lora_args.lora_dropout,
-        bias="none",
-        task_type="CAUSAL_LM",
-    )
-
-
-def main():
-    """Main training function."""
-
-    # Parse arguments
-    parser = HfArgumentParser((ModelArguments, DataArguments, LoRAArguments, TrainingArguments))
-
-    if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
-        # Load arguments from JSON file
-        model_args, data_args, lora_args, training_args = parser.parse_json_file(
-            json_file=os.path.abspath(sys.argv[1])
-        )
-    else:
-        model_args, data_args, lora_args, training_args = parser.parse_args_into_dataclasses()
-
-    # Log training parameters
-    logger.info("=" * 60)
-    logger.info("Training Configuration")
-    logger.info("=" * 60)
-    logger.info(f"Model: {model_args.model_name_or_path}")
-    logger.info(f"Dataset: {data_args.dataset_name}")
-    logger.info(f"Max sequence length: {data_args.max_seq_length}")
-    logger.info(f"Use LoRA: {lora_args.use_lora}")
-    logger.info(f"Use QLoRA: {lora_args.use_qlora}")
-    logger.info(f"Output directory: {training_args.output_dir}")
-    logger.info(f"Batch size per device: {training_args.per_device_train_batch_size}")
-    logger.info(f"Gradient accumulation steps: {training_args.gradient_accumulation_steps}")
-    logger.info(f"Learning rate: {training_args.learning_rate}")
-    logger.info(f"Number of epochs: {training_args.num_train_epochs}")
-    logger.info("=" * 60)
-
-    # Load tokenizer
-    logger.info("Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_args.model_name_or_path,
-        trust_remote_code=model_args.trust_remote_code,
-    )
-
-    # Set padding token if not set
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        logger.info(f"Set pad_token to eos_token: {tokenizer.eos_token}")
-
-    # Load dataset
-    logger.info(f"Loading dataset: {data_args.dataset_name}")
     dataset = load_dataset(
-        data_args.dataset_name,
-        data_args.dataset_config,
-        split="train"
+        dataset_config['name'],
+        dataset_config['config'],
+        split=dataset_config['split']
     )
 
     # Optionally limit dataset size for debugging
-    if data_args.num_train_samples is not None:
-        logger.info(f"Limiting training to {data_args.num_train_samples} samples")
-        dataset = dataset.select(range(min(data_args.num_train_samples, len(dataset))))
+    if dataset_config.get('num_train_samples') is not None:
+        num_samples = dataset_config['num_train_samples']
+        logger.info(f"Limiting training to {num_samples} samples")
+        dataset = dataset.select(range(min(num_samples, len(dataset))))
 
     logger.info(f"Dataset size: {len(dataset)} examples")
 
     # Format the dataset
     logger.info("Formatting dataset...")
-    dataset = dataset.map(
-        format_conversations_for_training,
-        remove_columns=dataset.column_names,
-        desc="Formatting conversations"
-    )
+
+    def formatting_prompts_func(examples):
+        """Format conversations using the tokenizer's chat template."""
+        convos = examples["conversations"]
+        texts = [
+            tokenizer.apply_chat_template(convo, tokenize=False, add_generation_prompt=False)
+            for convo in convos
+        ]
+        return {"text": texts}
+
+    dataset = dataset.map(formatting_prompts_func, batched=True)
 
     # Log a sample
     logger.info("Sample formatted text:")
@@ -235,73 +120,138 @@ def main():
     logger.info(dataset[0]["text"][:500] + "...")
     logger.info("-" * 60)
 
-    # Create BitsAndBytes config for quantization
-    bnb_config = create_bnb_config(use_qlora=lora_args.use_qlora)
+    return dataset
 
-    # Load model
-    logger.info("Loading model...")
-    model_kwargs = {
-        "pretrained_model_name_or_path": model_args.model_name_or_path,
-        "trust_remote_code": model_args.trust_remote_code,
-        "torch_dtype": torch.bfloat16,
-        "device_map": "auto",
-    }
 
-    if bnb_config is not None:
-        model_kwargs["quantization_config"] = bnb_config
-
-    if model_args.use_flash_attention_2:
-        model_kwargs["attn_implementation"] = "flash_attention_2"
-
-    model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
-
-    # Prepare model for k-bit training if using QLoRA
-    if lora_args.use_qlora:
-        logger.info("Preparing model for k-bit training...")
-        model = prepare_model_for_kbit_training(model)
-
-    # Apply LoRA
-    if lora_args.use_lora:
-        logger.info("Applying LoRA...")
-        lora_config = create_lora_config(lora_args)
-        model = get_peft_model(model, lora_config)
-        model.print_trainable_parameters()
-
-    # Create trainer
+def create_trainer(model, tokenizer, dataset, config):
+    """Create the SFT trainer."""
     logger.info("Creating trainer...")
+    training_config = config['training']
+
     trainer = SFTTrainer(
         model=model,
-        args=training_args,
-        train_dataset=dataset,
         tokenizer=tokenizer,
-        dataset_text_field="text",
-        max_seq_length=data_args.max_seq_length,
-        packing=False,  # Disable packing for simplicity
+        train_dataset=dataset,
+        eval_dataset=None,
+        args=SFTConfig(
+            dataset_text_field="text",
+            per_device_train_batch_size=training_config['per_device_train_batch_size'],
+            gradient_accumulation_steps=training_config['gradient_accumulation_steps'],
+            warmup_steps=training_config['warmup_steps'],
+            max_steps=training_config['max_steps'],
+            learning_rate=training_config['learning_rate'],
+            logging_steps=training_config['logging_steps'],
+            optim=training_config['optim'],
+            weight_decay=training_config['weight_decay'],
+            lr_scheduler_type=training_config['lr_scheduler_type'],
+            seed=training_config['seed'],
+            output_dir=training_config['output_dir'],
+            report_to=training_config['report_to'],
+            save_steps=training_config['save_steps'],
+            save_total_limit=training_config['save_total_limit'],
+            fp16=training_config['fp16'],
+            bf16=training_config['bf16'],
+        ),
     )
 
-    # Train
+    # Configure training on responses only if enabled
+    chat_config = config['chat_template']
+    if chat_config['train_on_responses_only']:
+        logger.info("Configuring training on responses only...")
+        trainer = train_on_responses_only(
+            trainer,
+            instruction_part=chat_config['instruction_part'],
+            response_part=chat_config['response_part'],
+        )
+
+    logger.info("Trainer created successfully")
+    return trainer
+
+
+def train_model(trainer, config):
+    """Train the model."""
+    logger.info("=" * 60)
     logger.info("Starting training...")
+    logger.info("=" * 60)
+
     trainer.train()
-
-    # Save the final model
-    logger.info(f"Saving final model to {training_args.output_dir}")
-    trainer.save_model()
-    tokenizer.save_pretrained(training_args.output_dir)
-
-    # Save training metrics
-    metrics_file = os.path.join(training_args.output_dir, "training_metrics.json")
-    with open(metrics_file, "w") as f:
-        json.dump(trainer.state.log_history, f, indent=2)
 
     logger.info("=" * 60)
     logger.info("Training completed successfully!")
-    logger.info(f"Model saved to: {training_args.output_dir}")
     logger.info("=" * 60)
 
-    # Optionally merge and save the full model (if using LoRA)
-    if lora_args.use_lora:
-        logger.info("\nTo merge LoRA weights with base model, run:")
-        logger.info("python SFT/merge_lora.py --model_path <output_dir> --output_path <merged_output_dir>")
+
+def save_model(trainer, model, tokenizer, config):
+    """Save the trained model."""
+    training_config = config['training']
+    output_config = config['output']
+    output_dir = training_config['output_dir']
+
+    logger.info(f"Saving model to {output_dir}")
+    trainer.save_model()
+    tokenizer.save_pretrained(output_dir)
+
+    # Save merged model if enabled
+    if output_config['save_merged_model']:
+        merged_dir = output_config['merged_output_dir']
+        logger.info(f"Saving merged model to {merged_dir}")
+
+        # Merge LoRA weights and save
+        model.save_pretrained_merged(
+            merged_dir,
+            tokenizer,
+            save_method="merged_16bit",
+        )
+
+        logger.info(f"Merged model saved to {merged_dir}")
+
+    logger.info("=" * 60)
+    logger.info(f"Model saved to: {output_dir}")
+    if output_config['save_merged_model']:
+        logger.info(f"Merged model saved to: {merged_dir}")
+    logger.info("=" * 60)
+
+
+def main():
+    """Main training function."""
+    # Determine config path
+    config_path = sys.argv[1] if len(sys.argv) > 1 else "train.yaml"
+
+    # Load configuration
+    config = load_config(config_path)
+
+    # Log training configuration
+    logger.info("=" * 60)
+    logger.info("Training Configuration")
+    logger.info("=" * 60)
+    logger.info(f"Model: {config['model']['name']}")
+    logger.info(f"Dataset: {config['dataset']['name']}")
+    logger.info(f"Max sequence length: {config['model']['max_seq_length']}")
+    logger.info(f"Use LoRA: {config['lora']['enabled']}")
+    logger.info(f"Output directory: {config['training']['output_dir']}")
+    logger.info(f"Batch size per device: {config['training']['per_device_train_batch_size']}")
+    logger.info(f"Gradient accumulation steps: {config['training']['gradient_accumulation_steps']}")
+    logger.info(f"Learning rate: {config['training']['learning_rate']}")
+    logger.info(f"Max steps: {config['training']['max_steps']}")
+    logger.info("=" * 60)
+
+    # Load model and tokenizer
+    model, tokenizer = load_model_and_tokenizer(config)
+
+    # Apply LoRA if enabled
+    model = apply_lora(model, config)
+
+    # Load and format dataset
+    dataset = load_and_format_dataset(config, tokenizer)
+
+    # Create trainer
+    trainer = create_trainer(model, tokenizer, dataset, config)
+
+    # Train model
+    train_model(trainer, config)
+
+    # Save model
+    save_model(trainer, model, tokenizer, config)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,71 @@
+# Training configuration for NVIDIA Nemotron-3-Nano-30B-A3B fine-tuning using Unsloth
+
+# Model configuration
+model:
+  name: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16"
+  max_seq_length: 2048
+  load_in_4bit: false
+  load_in_8bit: false
+  full_finetuning: true
+  trust_remote_code: true
+  attn_implementation: "eager"
+  unsloth_force_compile: true
+
+# LoRA configuration
+lora:
+  enabled: false
+  r: 8
+  lora_alpha: 16
+  lora_dropout: 0
+  bias: "none"
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+    - "in_proj"
+    - "out_proj"
+  use_gradient_checkpointing: "unsloth"
+  use_rslora: false
+  random_state: 3407
+
+# Dataset configuration
+dataset:
+  name: "open-thoughts/OpenThoughts-Agent-v1-SFT"
+  config: "default"
+  split: "train"
+  num_train_samples: null  # Set to a number to limit training samples for debugging
+
+# Training arguments
+training:
+  output_dir: "./outputs/nemotron-sft"
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  warmup_steps: 5
+  max_steps: 60
+  num_train_epochs: 1  # Will be ignored if max_steps is set
+  learning_rate: 2.0e-4
+  logging_steps: 1
+  optim: "adamw_torch"
+  weight_decay: 0.001
+  lr_scheduler_type: "linear"
+  seed: 3407
+  report_to: "none"
+  save_steps: 500
+  save_total_limit: 2
+  fp16: false
+  bf16: true
+
+# Chat template training configuration
+chat_template:
+  train_on_responses_only: true
+  instruction_part: "<|user|>\n"
+  response_part: "<|assistant|>\n"
+
+# Output configuration
+output:
+  save_merged_model: false  # Not needed for full fine-tuning
+  merged_output_dir: "./outputs/nemotron-sft-merged"
