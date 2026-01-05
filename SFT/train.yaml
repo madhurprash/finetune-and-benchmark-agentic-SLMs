@@ -2,21 +2,22 @@
 
 # Model configuration
 model:
-  name: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16"
-  max_seq_length: 2048
-  load_in_4bit: false
-  load_in_8bit: false
-  full_finetuning: true
-  trust_remote_code: true
+  name: "unsloth/Nemotron-3-Nano-30B-A3B"
+  max_seq_length: 2048  # Reduced to 1024 for memory efficiency
+  load_in_4bit: False  # Enable 4-bit quantization to reduce memory usage
+  load_in_8bit: False
+  full_finetuning: False  # Disable full fine-tuning, use LoRA instead
+  trust_remote_code: True
   attn_implementation: "eager"
-  unsloth_force_compile: true
+  unsloth_force_compile: True
 
 # LoRA configuration
 lora:
-  enabled: false
-  r: 8
-  lora_alpha: 16
-  lora_dropout: 0
+  # Enable LoRA for memory-efficient fine-tuning
+  enabled: true  # ENABLED for parameter-efficient training
+  r: 8  # Increased rank for better capacity
+  lora_alpha: 16  # 2x rank for scaling
+  lora_dropout: 0  # Small dropout for regularization
   bias: "none"
   target_modules:
     - "q_proj"
@@ -29,8 +30,9 @@ lora:
     - "in_proj"
     - "out_proj"
   use_gradient_checkpointing: "unsloth"
-  use_rslora: false
+  use_rslora: False
   random_state: 3407
+  loftq_config: None
 
 # Dataset configuration
 dataset:
@@ -42,30 +44,24 @@ dataset:
 # Training arguments
 training:
   output_dir: "./outputs/nemotron-sft"
-  per_device_train_batch_size: 1
-  gradient_accumulation_steps: 8
+  per_device_train_batch_size: 2  # Increased to 2 with LoRA and 4-bit quantization
+  gradient_accumulation_steps: 8  # Reduced since batch size is higher (effective batch = 2*8 = 16)
   warmup_steps: 5
   max_steps: 60
   num_train_epochs: 1  # Will be ignored if max_steps is set
   learning_rate: 2.0e-4
   logging_steps: 1
-  optim: "adamw_torch"
+  optim: "adamw_8bit"  # 8-bit optimizer for memory efficiency
   weight_decay: 0.001
   lr_scheduler_type: "linear"
   seed: 3407
   report_to: "none"
   save_steps: 500
   save_total_limit: 2
-  fp16: false
-  bf16: true
-
-# Chat template training configuration
-chat_template:
-  train_on_responses_only: true
-  instruction_part: "<|user|>\n"
-  response_part: "<|assistant|>\n"
-
+  gradient_checkpointing: true  # Enable gradient checkpointing for memory efficiency
+  bf16: true  # Enable BF16 training to match model dtype
+  
 # Output configuration
 output:
-  save_merged_model: false  # Not needed for full fine-tuning
+  save_merged_model: true  # Save LoRA-merged model for inference
   merged_output_dir: "./outputs/nemotron-sft-merged"

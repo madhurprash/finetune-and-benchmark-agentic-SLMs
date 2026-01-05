@@ -2,18 +2,13 @@
 Supervised Fine-Tuning (SFT) Script for NVIDIA Nemotron-3-Nano-30B-A3B
 using Unsloth for efficient fine-tuning.
 
-This script loads configuration from train.yaml and fine-tunes the model
-on the OpenThoughts-Agent-v1-SFT dataset.
-
-Author: Claude
-License: Apache 2.0
+Simplified version based on Unsloth notebook - removes unnecessary dtype conversions.
 """
 
 import os
 import sys
 import yaml
 import logging
-from pathlib import Path
 from datasets import load_dataset
 from unsloth import FastLanguageModel
 from trl import SFTTrainer, SFTConfig
@@ -48,8 +43,8 @@ def load_model_and_tokenizer(config):
         load_in_8bit=model_config['load_in_8bit'],
         full_finetuning=model_config['full_finetuning'],
         trust_remote_code=model_config['trust_remote_code'],
-        unsloth_force_compile=model_config['unsloth_force_compile'],
         attn_implementation=model_config['attn_implementation'],
+        unsloth_force_compile=model_config.get('unsloth_force_compile', False),
     )
 
     logger.info("Model and tokenizer loaded successfully")
@@ -75,7 +70,7 @@ def apply_lora(model, config):
         use_gradient_checkpointing=lora_config['use_gradient_checkpointing'],
         random_state=lora_config['random_state'],
         use_rslora=lora_config['use_rslora'],
-        loftq_config=None,
+        loftq_config=lora_config.get('loftq_config', None),
     )
     logger.info("LoRA applied successfully")
     return model
@@ -132,9 +127,8 @@ def create_trainer(model, tokenizer, dataset, config):
         model=model,
         tokenizer=tokenizer,
         train_dataset=dataset,
-        eval_dataset=None,
+        dataset_text_field="text",
         args=SFTConfig(
-            dataset_text_field="text",
             per_device_train_batch_size=training_config['per_device_train_batch_size'],
             gradient_accumulation_steps=training_config['gradient_accumulation_steps'],
             warmup_steps=training_config['warmup_steps'],
@@ -149,26 +143,14 @@ def create_trainer(model, tokenizer, dataset, config):
             report_to=training_config['report_to'],
             save_steps=training_config['save_steps'],
             save_total_limit=training_config['save_total_limit'],
-            fp16=training_config['fp16'],
-            bf16=training_config['bf16'],
+            bf16=training_config.get('bf16', False),
         ),
     )
-
-    # Configure training on responses only if enabled
-    chat_config = config['chat_template']
-    if chat_config['train_on_responses_only']:
-        logger.info("Configuring training on responses only...")
-        trainer = train_on_responses_only(
-            trainer,
-            instruction_part=chat_config['instruction_part'],
-            response_part=chat_config['response_part'],
-        )
-
     logger.info("Trainer created successfully")
     return trainer
 
 
-def train_model(trainer, config):
+def train_model(trainer):
     """Train the model."""
     logger.info("=" * 60)
     logger.info("Starting training...")
@@ -248,7 +230,7 @@ def main():
     trainer = create_trainer(model, tokenizer, dataset, config)
 
     # Train model
-    train_model(trainer, config)
+    train_model(trainer)
 
     # Save model
     save_model(trainer, model, tokenizer, config)

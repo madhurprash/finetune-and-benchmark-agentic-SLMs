@@ -1,6 +1,6 @@
 """
-2025.12.6
-2025.12.7
+2026.1.2
+2026.1.2
 4.57.3
 0.24.0
 __UNSLOTH_VERSIONING__
@@ -39,6 +39,7 @@ import numpy as np
 from contextlib import nullcontext
 from torch.nn import functional as F
 import inspect
+import psutil
 from transformers import DataCollatorForSeq2Seq, DataCollatorForLanguageModeling as TransformersDataCollatorForLanguageModeling
 from transformers.training_args import ParallelMode
 
@@ -46,16 +47,31 @@ from transformers.training_args import ParallelMode
 # Also patches W&B since multiple runs must use wandb.finish()
 import functools
 from types import MethodType
+try:
+    from unsloth_zoo.gradient_checkpointing import reset_unsloth_gradient_checkpointing_buffers
+except:
+    def reset_unsloth_gradient_checkpointing_buffers(): pass
 def prepare_for_training_mode(f):
     @functools.wraps(f)
     def wrapper(self, *args, **kwargs):
         # Enable training mode
+        _was_training = None
+        if hasattr(self, 'model') and hasattr(self.model, "training"):
+            _was_training = self.model.training
         if hasattr(self, 'model') and hasattr(self.model, "for_training"):
             self.model.for_training()
         output = f(self, *args, **kwargs)
-        # Return inference mode
+        # Restore previous mode when possible
         if hasattr(self, 'model') and hasattr(self.model, "for_inference"):
-            self.model.for_inference()
+            if _was_training is False:
+                self.model.for_inference()
+            elif _was_training is True and hasattr(self.model, "for_training"):
+                self.model.for_training()
+        # Reset gradient checkpointing buffers to free memory while staying ready for next run
+        try:
+            reset_unsloth_gradient_checkpointing_buffers()
+        except:
+            pass
         # Patch W&B to enable logging on future runs, otherwise it'll overwrite the first run
         try:
             import wandb
@@ -723,8 +739,13 @@ class UnslothRLOOConfig(RLOOConfig):
             output_dir = 'unsloth_training_checkpoints'
             save_strategy = 'no'
         if dataset_num_proc is None:
-            from multiprocessing import cpu_count
-            dataset_num_proc = min(max(cpu_count()+4, 2), 64)
+            import psutil
+            dataset_num_proc = min(max((psutil.cpu_count() or 1)+4, 2), 64)
+            memory_gb_left = psutil.virtual_memory().available / (1024**3)
+            if   memory_gb_left <=  4: dataset_num_proc = 1 # Too risky, so set to 1
+            elif memory_gb_left <=  6: dataset_num_proc = min(2, dataset_num_proc)
+            elif memory_gb_left <= 10: dataset_num_proc = min(4, dataset_num_proc)
+            elif memory_gb_left <= 14: dataset_num_proc = min(6, dataset_num_proc)
         if steps_per_generation is None and generation_batch_size is None:
             ga = gradient_accumulation_steps
             world_size = int(os.environ.get('WORLD_SIZE', '1'))
@@ -733,9 +754,9 @@ class UnslothRLOOConfig(RLOOConfig):
                 per_device_train_batch_size = num_generations
         
         if temperature <= 0:
-            raise MathError('Unsloth: Please set a positive non-zero temperature since your results will be wrong.')
+            raise ValueError('Unsloth: Please set a positive non-zero temperature since your results will be wrong.')
         elif temperature >= 10:
-            raise MathError('Unsloth: Please set a positive non-zero temperature less than 10, since sampling will be quite erratic.')
+            raise ValueError('Unsloth: Please set a positive non-zero temperature less than 10, since sampling will be quite erratic.')
         
         
         super().__init__(
@@ -2575,6 +2596,11 @@ class UnslothRLOOTrainer(_UnslothRLOOTrainer):
             if args_max_seq_length is None and model_max_seq_length is not None:
                 max_seq_length = model.max_seq_length
                 if hasattr(args, 'max_seq_length'): args.max_seq_length = max_seq_length
+            elif args_max_seq_length is not None and model_max_seq_length is not None:
+                if args_max_seq_length > model_max_seq_length:
+                    print('Unsloth: You set `max_seq_length` as ' + str(args_max_seq_length) + ' but '
+                           'the maximum the model supports is ' + str(model_max_seq_length) + '. We shall reduce it.')
+                    args.max_seq_length = model_max_seq_length
         if model is not None and hasattr(model, 'for_training'):
             model.for_training(use_gradient_checkpointing=getattr(args, 'gradient_checkpointing', True))
         if 'tokenizer' in locals() and hasattr(tokenizer, 'padding_side'): tokenizer.padding_side = 'right'
@@ -2659,6 +2685,12 @@ class UnslothRLOOTrainer(_UnslothRLOOTrainer):
         pass
         if hasattr(self, 'train'):
             self.train = MethodType(prepare_for_training_mode(self.__class__.train), self)
+        pass
+        if hasattr(self, 'llm') and self.llm is not None and hasattr(self.llm, 'get_tokenizer'):
+            _vllm_tok = self.llm.get_tokenizer()
+            _pc = getattr(self, 'processing_class', None) or getattr(self, 'tokenizer', None)
+            if _vllm_tok is not None and _pc is not None and getattr(_pc, 'chat_template', None) is not None and getattr(_vllm_tok, 'chat_template', None) is None:
+                _vllm_tok.chat_template = _pc.chat_template
         pass
         
 pass
