@@ -6,6 +6,23 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Unsloth compiled cache
+unsloth_compiled_cache/
+SFT/unsloth_compiled_cache/
+
+# Training outputs and results
+outputs/
+results/
+checkpoints/
+runs/
+wandb/
+
+# Model files
+*.safetensors
+*.bin
+*.pth
+*.ckpt
+
 # OpenThoughts dataset
 openthoughts_dataset/
 *openthoughts*.json

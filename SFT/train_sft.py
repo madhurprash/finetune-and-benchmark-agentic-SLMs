@@ -9,6 +9,7 @@ import os
 import sys
 import yaml
 import logging
+import torch
 from datasets import load_dataset
 from unsloth import FastLanguageModel
 from trl import SFTTrainer, SFTConfig
@@ -36,6 +37,13 @@ def load_model_and_tokenizer(config):
     logger.info("Loading model and tokenizer...")
     model_config = config['model']
 
+    # For multi-GPU training with quantization, we need to ensure each process
+    # loads the model to its assigned GPU (based on LOCAL_RANK)
+    local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    device_map = {"": local_rank}
+
+    logger.info(f"Process local_rank={local_rank}, loading model to device cuda:{local_rank}")
+
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_config['name'],
         max_seq_length=model_config['max_seq_length'],
@@ -45,6 +53,7 @@ def load_model_and_tokenizer(config):
         trust_remote_code=model_config['trust_remote_code'],
         attn_implementation=model_config['attn_implementation'],
         unsloth_force_compile=model_config.get('unsloth_force_compile', False),
+        device_map=device_map,  # Ensure each process uses its assigned GPU
     )
 
     logger.info("Model and tokenizer loaded successfully")
@@ -144,6 +153,9 @@ def create_trainer(model, tokenizer, dataset, config):
             save_steps=training_config['save_steps'],
             save_total_limit=training_config['save_total_limit'],
             bf16=training_config.get('bf16', False),
+            # DDP settings for multi-GPU training
+            ddp_find_unused_parameters=training_config.get('ddp_find_unused_parameters', False),
+            ddp_backend=training_config.get('ddp_backend', 'nccl'),
         ),
     )
     logger.info("Trainer created successfully")
