@@ -1,4 +1,4 @@
-# vLLM Model Benchmarking on OpenThoughts
+# vLLM Model Fine-tuning & Benchmarking on `OpenThoughts` & `Terminal Bench 2.0`
 
 Benchmarking any vLLM-supported model on the [OpenThoughts dataset](https://huggingface.co/datasets/open-thoughts/OpenThoughts-TB-dev) using [Harbor](https://www.openthoughts.ai/blog/agent) for agentic reasoning evaluation.
 
