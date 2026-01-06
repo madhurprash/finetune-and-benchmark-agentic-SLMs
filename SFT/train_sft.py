@@ -1,8 +1,9 @@
 """
-Supervised Fine-Tuning (SFT) Script for NVIDIA Nemotron-3-Nano-30B-A3B
+Supervised Fine-Tuning (SFT) Script for vLLM-compatible models
 using Unsloth for efficient fine-tuning.
 
 Simplified version based on Unsloth notebook - removes unnecessary dtype conversions.
+Works with any model supported by Unsloth and vLLM.
 """
 
 import os

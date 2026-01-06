@@ -1,8 +1,9 @@
 """
-vLLM OpenAI-Compatible API Server for NVIDIA Nemotron-3-Nano-30B-A3B-BF16
+vLLM OpenAI-Compatible API Server for any vLLM-supported model
 
 This script starts an OpenAI-compatible API server using vLLM.
 The server will be accessible at http://localhost:8000
+Configuration is loaded from config.yaml
 """
 import os
 import subprocess
@@ -35,6 +36,19 @@ def start_api_server():
 
     if vllm_config.get("enforce_eager", False):
         cmd.append("--enforce-eager")
+
+    # Add vLLM engine parameters
+    if "max_model_len" in vllm_config:
+        cmd.extend(["--max-model-len", str(vllm_config["max_model_len"])])
+
+    if "quantization" in vllm_config:
+        cmd.extend(["--quantization", vllm_config["quantization"]])
+
+    if "kv_cache_dtype" in vllm_config:
+        cmd.extend(["--kv-cache-dtype", vllm_config["kv_cache_dtype"]])
+
+    if "gpu_memory_utilization" in vllm_config:
+        cmd.extend(["--gpu-memory-utilization", str(vllm_config["gpu_memory_utilization"])])
 
     print("="*60)
     print("Starting vLLM OpenAI-Compatible API Server")

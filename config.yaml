@@ -1,13 +1,13 @@
 general:
-  name: "nvidia-nemotron-vllm-deployment"
-  description: "vLLM deployment configuration for NVIDIA Nemotron-3-Nano-30B-A3B-BF16 model"
+  name: "agentic-SLM-vllm-deployment"
+  description: "vLLM deployment configuration for Agentic SLM models"
 
 # Model information and configuration
 model_information:
   # Model deployment configuration
   model_config:
     # Model identifier from HuggingFace
-    model_id: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+    model_id: "mistralai/Devstral-Small-2-24B-Instruct-2512"
     # Trust remote code execution
     trust_remote_code: true
     # Data type for model weights (auto, float16, bfloat16, etc.)
@@ -19,6 +19,14 @@ model_information:
     enforce_eager: false
     # PyTorch CUDA allocator configuration
     pytorch_cuda_alloc_conf: "expandable_segments:True"
+    # Maximum context length (reduced to fit available GPU memory)
+    max_model_len: 131072
+    # Quantization method (fp8 for Devstral Small 2)
+    quantization: "fp8"
+    # KV cache dtype (fp8 reduces memory usage for long context)
+    kv_cache_dtype: "fp8"
+    # GPU memory utilization (0.90 leaves headroom)
+    gpu_memory_utilization: 0.90
 
   # Default inference parameters for generation
   inference_parameters:

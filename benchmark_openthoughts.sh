@@ -1,12 +1,13 @@
 #!/bin/bash
 #
-# OpenThoughts Benchmark Script for NVIDIA Nemotron-3-Nano-30B-A3B-BF16
+# OpenThoughts Benchmark Script for vLLM-served models
 #
-# This script benchmarks the model on the OpenThoughts-TB-dev dataset using harbor.
+# This script benchmarks any model served via vLLM on the OpenThoughts-TB-dev dataset using harbor.
 #
 # Prerequisites:
 #   - vLLM API server should be running on http://localhost:8000
 #   - Start the server with: python serve_api.py
+#   - config.yaml should contain your model configuration
 #
 # Usage:
 #   ./benchmark_openthoughts.sh [--local-dir DIR] [--skip-download]
@@ -17,9 +18,12 @@ set -e  # Exit on any error
 # Configuration
 DATASET_REPO="open-thoughts/OpenThoughts-TB-dev"
 DEFAULT_LOCAL_DIR="./openthoughts_dataset"
-AGENT_NAME="nvidia-nemotron-nano"
-MODEL_NAME="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 API_BASE="http://localhost:8000/v1"
+
+# Read model name from config.yaml
+MODEL_NAME=$(python3 -c "import yaml; config = yaml.safe_load(open('config.yaml')); print(config['model_information']['model_config']['model_id'])")
+# Extract a short agent name from model ID (e.g., "mistralai/Model-Name" -> "model-name")
+AGENT_NAME=$(echo "$MODEL_NAME" | sed 's|.*/||' | tr '[:upper:]' '[:lower:]' | sed 's/_/-/g' | cut -d'-' -f1-3)
 
 # Colors for output
 RED='\033[0;31m'
@@ -187,7 +191,7 @@ echo ""
 # Run harbor benchmark with custom external agent
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-AGENT_PATH="nvidia_nemotron_agent:NvidiaNemotronAgent"
+AGENT_PATH="nvidia_nemotron_agent:VLLMAgent"
 
 echo "Using custom external agent:"
 echo "  Agent Path:  ${AGENT_PATH}"
@@ -201,6 +205,7 @@ export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH}"
 harbor run \
     --path "${LOCAL_DIR}" \
     --agent-import-path "${AGENT_PATH}" \
+    --agent-args "model_name=${MODEL_NAME}" \
     --jobs-dir "${RESULTS_DIR}" \
     --job-name "${JOB_NAME}" \
     --n-concurrent 4

@@ -1,8 +1,8 @@
 """
-External Agent for NVIDIA Nemotron-3-Nano-30B via local vLLM server
+External Agent for vLLM-served models via local vLLM server
 
 This agent integrates a locally running vLLM server with Harbor framework
-by implementing the BaseAgent interface.
+by implementing the BaseAgent interface. It works with any model served via vLLM.
 """
 
 import os
@@ -15,10 +15,10 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
 
-class NvidiaNemotronAgent(BaseAgent):
+class VLLMAgent(BaseAgent):
     """
-    External agent that uses NVIDIA Nemotron-3-Nano-30B model
-    served via local vLLM server with OpenAI-compatible API.
+    External agent that uses any model served via local vLLM server
+    with OpenAI-compatible API.
     """
 
     def __init__(
@@ -32,11 +32,11 @@ class NvidiaNemotronAgent(BaseAgent):
         **kwargs,
     ):
         """
-        Initialize the NVIDIA Nemotron agent.
+        Initialize the vLLM agent.
 
         Args:
             logs_dir: Directory for agent logs (required by BaseAgent)
-            model_name: Model identifier (default: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16)
+            model_name: Model identifier (must match model served by vLLM)
             logger: Logger instance (optional)
             api_base: Base URL for the vLLM OpenAI-compatible API
             temperature: Sampling temperature for generation
@@ -45,8 +45,10 @@ class NvidiaNemotronAgent(BaseAgent):
         # Call parent constructor
         super().__init__(logs_dir=logs_dir, model_name=model_name, logger=logger, **kwargs)
 
-        # Set model to use (default to the NVIDIA Nemotron model if not specified)
-        self.model = model_name or "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+        # Set model to use - must be provided
+        if not model_name:
+            raise ValueError("model_name is required and must match the model served by vLLM")
+        self.model = model_name
         self.api_base = api_base
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -60,7 +62,7 @@ class NvidiaNemotronAgent(BaseAgent):
     @staticmethod
     def name() -> str:
         """Return the agent's name."""
-        return "nvidia-nemotron-nano"
+        return "vllm-agent"
 
     @staticmethod
     def version() -> Optional[str]:
@@ -281,4 +283,7 @@ Work iteratively until the task is fully complete. Be thorough and verify your w
 
 
 # Export the agent class
-__all__ = ['NvidiaNemotronAgent']
+__all__ = ['VLLMAgent']
+
+# Backwards compatibility alias
+NvidiaNemotronAgent = VLLMAgent
