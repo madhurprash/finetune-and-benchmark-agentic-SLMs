@@ -54,7 +54,6 @@ def load_model_and_tokenizer(config):
         trust_remote_code=model_config['trust_remote_code'],
         torch_dtype=getattr(torch, model_config['torch_dtype']),
         attn_implementation=model_config.get('attn_implementation', 'eager'),
-        device_map={"": local_rank} if local_rank != -1 else None,
     )
     print("Model and tokenizer loaded successfully")
     return model, tokenizer
@@ -171,6 +170,7 @@ def create_trainer(model, tokenizer, dataset, config):
     # Setup training arguments
     training_args = SFTConfig(
         output_dir=training_config['output_dir'],
+        max_length=sft_config["max_seq_length"],
         num_train_epochs=training_config['num_train_epochs'],
         per_device_train_batch_size=training_config['per_device_train_batch_size'],
         gradient_accumulation_steps=training_config['gradient_accumulation_steps'],
@@ -203,6 +203,8 @@ def create_trainer(model, tokenizer, dataset, config):
         # Reporting
         report_to=training_config['report_to'],
         logging_dir=training_config.get('logging_dir', './logs'),
+
+        # SFT specific
         dataset_text_field=sft_config['dataset_text_field'],
     )
 
