@@ -26,10 +26,17 @@ def start_api_server():
     if "pytorch_cuda_alloc_conf" in vllm_config:
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = vllm_config["pytorch_cuda_alloc_conf"]
 
+    # Determine which model to use based on is_model_local flag
+    is_model_local = model_config.get("is_model_local", False)
+    if is_model_local:
+        model_to_use = model_config.get("model_path", model_config["model_id"])
+    else:
+        model_to_use = model_config["model_id"]
+
     # Build the vLLM server command
     cmd = [
         "python", "-m", "vllm.entrypoints.openai.api_server",
-        "--model", model_config["model_id"],
+        "--model", model_to_use,
         "--dtype", model_config["dtype"],
         "--host", "0.0.0.0",
         "--port", "8000",
@@ -63,10 +70,25 @@ def start_api_server():
     if vllm_config.get("enable_auto_tool_choice", False):
         cmd.append("--enable-auto-tool-choice")
 
+    # LoRA adapter support
+    if vllm_config.get("enable_lora", False):
+        cmd.append("--enable-lora")
+
+        if "lora_modules" in vllm_config and vllm_config["lora_modules"]:
+            for lora_name, lora_path in vllm_config["lora_modules"].items():
+                cmd.extend(["--lora-modules", f"{lora_name}={lora_path}"])
+
+        if "max_loras" in vllm_config:
+            cmd.extend(["--max-loras", str(vllm_config["max_loras"])])
+
+        if "max_lora_rank" in vllm_config:
+            cmd.extend(["--max-lora-rank", str(vllm_config["max_lora_rank"])])
+
     print("="*60)
     print("Starting vLLM OpenAI-Compatible API Server")
     print("="*60)
-    print(f"Model: {model_config['model_id']}")
+    print(f"Model: {model_to_use}")
+    print(f"Model source: {'Local path' if is_model_local else 'HuggingFace Hub'}")
     print(f"Max model length: {vllm_config.get('max_model_len', 8192)}")
     print(f"GPU memory utilization: {vllm_config.get('gpu_memory_utilization', 0.85)}")
     print(f"\nServer will be available at: http://localhost:8000")

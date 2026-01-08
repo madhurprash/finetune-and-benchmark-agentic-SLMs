@@ -168,12 +168,31 @@ fi
 # Install harbor if not present
 print_header "Installing Harbor CLI"
 
-if command_exists harbor; then
+# Check if harbor exists in venv or system
+HARBOR_CMD=""
+if [ -f ".venv/bin/harbor" ]; then
+    HARBOR_CMD=".venv/bin/harbor"
+    echo -e "${GREEN}✓${NC} Harbor is already installed in .venv"
+elif command_exists harbor; then
+    HARBOR_CMD="harbor"
     echo -e "${GREEN}✓${NC} Harbor is already installed"
-    harbor --version || echo "Harbor installed (version check not available)"
 else
-    echo "Installing harbor from PyPI..."
-    $PIP_CMD install harbor-ai
+    echo "Installing harbor from GitHub..."
+    # Install from git+https since harbor-ai package name may not be on PyPI
+    $PIP_CMD install git+https://github.com/harbor-ai/harbor.git || \
+    $PIP_CMD install harbor || \
+    {
+        echo -e "${RED}Error: Failed to install Harbor${NC}"
+        echo "Please install manually: pip install git+https://github.com/harbor-ai/harbor.git"
+        exit 1
+    }
+
+    # Check again after installation
+    if [ -f ".venv/bin/harbor" ]; then
+        HARBOR_CMD=".venv/bin/harbor"
+    elif command_exists harbor; then
+        HARBOR_CMD="harbor"
+    fi
     echo -e "${GREEN}✓${NC} Harbor installed successfully"
 fi
 
@@ -227,6 +246,7 @@ harbor run \
     --jobs-dir "${RESULTS_DIR}" \
     --job-name "${JOB_NAME}" \
     -n "${N_CONCURRENT}" \
+    --task-name adaptive-rejection-sampler \
     -k "${N_ATTEMPTS}"
 
 BENCHMARK_EXIT_CODE=$?

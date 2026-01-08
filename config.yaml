@@ -6,8 +6,12 @@ general:
 model_information:
   # Model deployment configuration
   model_config:
-    # Model identifier from HuggingFace
-    model_id: "mistralai/Devstral-Small-2-24B-Instruct-2512"
+    # Whether to load model from local path (true) or HuggingFace Hub (false)
+    is_model_local: false
+    # Model identifier from HuggingFace (used when is_model_local is false)
+    model_id: "devstral-sft"
+    # Local model path (used when is_model_local is true)
+    model_path: ""
     # Trust remote code execution
     trust_remote_code: true
     # Data type for model weights (auto, float16, bfloat16, etc.)
@@ -16,13 +20,19 @@ model_information:
   # vLLM Engine configuration for memory optimization
   vllm_engine_config:
     # Maximum model context length
-    max_model_len: 262144
+    max_model_len: 32768
     # Tensor parallel size for multi-GPU deployment
     tensor_parallel_size: 8
     # Tool call parser for function calling support
     tool_call_parser: "mistral"
     # Enable automatic tool choice
     enable_auto_tool_choice: true
+    # LoRA adapter configuration
+    enable_lora: true
+    lora_modules:
+      devstral-sft: "/home/ubuntu/devstral/benchmark-agentic-SLMs/SFT/trl/outputs/devstral-sft"
+    max_loras: 1
+    max_lora_rank: 8
 
   # Default inference parameters for generation
   inference_parameters:
@@ -30,3 +40,12 @@ model_information:
     temperature: 0.6
     # Maximum number of tokens to generate
     max_tokens: 8192
+
+# LoRA adapter merging configuration
+lora_merge:
+  # Base model to merge adapter with
+  base_model: "mistralai/Devstral-Small-2-24B-Instruct-2512"
+  # Path to the LoRA adapter directory
+  adapter_path: "/home/ubuntu/devstral/benchmark-agentic-SLMs/SFT/trl/outputs/devstral-sft"
+  # Output path for merged model
+  output_path: "/home/ubuntu/devstral/benchmark-agentic-SLMs/SFT/trl/outputs/devstral-sft-merged"
