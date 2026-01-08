@@ -203,9 +203,6 @@ def create_trainer(model, tokenizer, dataset, config):
         # Reporting
         report_to=training_config['report_to'],
         logging_dir=training_config.get('logging_dir', './logs'),
-
-        # SFT specific
-        packing=sft_config['packing'],
         dataset_text_field=sft_config['dataset_text_field'],
     )
 
