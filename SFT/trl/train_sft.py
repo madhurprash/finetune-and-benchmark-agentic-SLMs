@@ -17,7 +17,6 @@ from transformers import (
     MistralCommonBackend,
     AutoModelForCausalLM,
     TrainingArguments,
-    BitsAndBytesConfig
 )
 
 def load_config(config_path="train.yaml"):
@@ -49,25 +48,13 @@ def load_model_and_tokenizer(config):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Setup quantization if enabled
-    quantization_config = None
-    if quant_config.get('enabled', False):
-        print("Setting up 4-bit quantization for memory efficiency...")
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=quant_config.get('load_in_4bit', True),
-            bnb_4bit_compute_dtype=getattr(torch, quant_config.get('bnb_4bit_compute_dtype', 'bfloat16')),
-            bnb_4bit_quant_type=quant_config.get('bnb_4bit_quant_type', 'nf4'),
-            bnb_4bit_use_double_quant=quant_config.get('bnb_4bit_use_double_quant', True),
-        )
-
     # Load model - with quantization if enabled, otherwise no device_map for DDP
     model = Mistral3ForConditionalGeneration.from_pretrained(
         model_config['name'],
         trust_remote_code=model_config['trust_remote_code'],
         torch_dtype=getattr(torch, model_config['torch_dtype']),
         attn_implementation=model_config.get('attn_implementation', 'eager'),
-        quantization_config=quantization_config,
-        device_map={"": local_rank} if local_rank != -1 and quantization_config else None,
+        device_map={"": local_rank} if local_rank != -1 else None,
     )
     print("Model and tokenizer loaded successfully")
     return model, tokenizer
@@ -84,7 +71,14 @@ def setup_lora(model, config):
 
     # Prepare model for training
     model.gradient_checkpointing_enable()
-    model = prepare_model_for_kbit_training(model)
+
+    # Only prepare for kbit training if quantization is enabled
+    quant_config = config.get('quantization', {})
+    if quant_config.get('enabled', False):
+        print("Preparing model for k-bit training...")
+        model = prepare_model_for_kbit_training(model)
+    else:
+        print("Quantization not enabled, skipping prepare_model_for_kbit_training")
 
     # Configure LoRA
     peft_config = LoraConfig(

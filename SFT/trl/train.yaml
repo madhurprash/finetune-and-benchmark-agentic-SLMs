@@ -4,10 +4,10 @@
 # Model configuration
 model:
   name: "mistralai/Devstral-Small-2-24B-Instruct-2512"
-  max_seq_length: 4096
+  max_seq_length: 1024
   trust_remote_code: true
   torch_dtype: "bfloat16"
-  attn_implementation: "eager"
+  attn_implementation: "sdpa"
   use_cache: false
 
 # Quantization configuration (reduces memory usage)
@@ -22,8 +22,8 @@ quantization:
 # LoRA configuration for parameter-efficient fine-tuning
 lora:
   enabled: true
-  r: 16
-  lora_alpha: 32
+  r: 8
+  lora_alpha: 16
   lora_dropout: 0.05
   bias: "none"
   task_type: "CAUSAL_LM"
@@ -47,17 +47,20 @@ dataset:
 training:
   output_dir: "./outputs/devstral-sft"
   num_train_epochs: 1
-  per_device_train_batch_size: 2
+  per_device_train_batch_size: 1
   gradient_accumulation_steps: 8
   gradient_checkpointing: true
+  gradient_checkpointing_kwargs:
+    use_reentrant: false
 
   # Optimizer settings
   max_steps: 100
-  optim: "adamw_torch"
+  optim: "adamw_8bit"
   learning_rate: 2.0e-5
   weight_decay: 0.01
   warmup_ratio: 0.03
   lr_scheduler_type: "cosine"
+  ddp_find_unused_parameters: false  # Optimize DDP memory usage
 
   # Logging and saving
   logging_steps: 10
@@ -81,6 +84,6 @@ training:
 
 # SFT specific settings
 sft:
-  max_seq_length: 4096
+  max_seq_length: 512  # Reduced from 2048 to prevent OOM
   packing: false  # Set to true for efficiency with short sequences
   dataset_text_field: "text"  # Field after formatting
