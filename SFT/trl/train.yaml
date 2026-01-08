@@ -1,0 +1,86 @@
+# Training configuration for Devstral-Small-2-24B fine-tuning
+# Reference: https://huggingface.co/docs/trl/en/sft_trainer
+
+# Model configuration
+model:
+  name: "mistralai/Devstral-Small-2-24B-Instruct-2512"
+  max_seq_length: 4096
+  trust_remote_code: true
+  torch_dtype: "bfloat16"
+  attn_implementation: "eager"
+  use_cache: false
+
+# Quantization configuration (reduces memory usage)
+# NOTE: Disabled because the model is already pre-quantized with FP8
+quantization:
+  enabled: false
+  load_in_4bit: true
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_use_double_quant: true
+
+# LoRA configuration for parameter-efficient fine-tuning
+lora:
+  enabled: true
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  bias: "none"
+  task_type: "CAUSAL_LM"
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+# Dataset configuration
+dataset:
+  name: "open-thoughts/OpenThoughts-Agent-v1-SFT"
+  config: "default"
+  split: "train"
+  num_train_samples: null  # Set to a number to limit training samples for debugging
+
+# Training arguments
+training:
+  output_dir: "./outputs/devstral-sft"
+  num_train_epochs: 1
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8
+  gradient_checkpointing: true
+
+  # Optimizer settings
+  max_steps: 100
+  optim: "adamw_torch"
+  learning_rate: 2.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  lr_scheduler_type: "cosine"
+
+  # Logging and saving
+  logging_steps: 10
+  save_strategy: "steps"
+  save_steps: 500
+  save_total_limit: 2
+
+  # Mixed precision training
+  bf16: true
+  fp16: false
+
+  # Other settings
+  max_grad_norm: 1.0
+  seed: 42
+  dataloader_num_workers: 4
+  remove_unused_columns: false
+
+  # Reporting
+  report_to: "tensorboard"
+  logging_dir: "./logs"
+
+# SFT specific settings
+sft:
+  max_seq_length: 4096
+  packing: false  # Set to true for efficiency with short sequences
+  dataset_text_field: "text"  # Field after formatting
