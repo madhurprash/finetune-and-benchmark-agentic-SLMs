@@ -47,14 +47,14 @@ dataset:
 training:
   output_dir: "./outputs/devstral-sft"
   num_train_epochs: 1
-  per_device_train_batch_size: 1
+  per_device_train_batch_size: 2
   gradient_accumulation_steps: 8
   gradient_checkpointing: true
   gradient_checkpointing_kwargs:
     use_reentrant: false
 
   # Optimizer settings
-  max_steps: 100
+  max_steps: 1000
   optim: "adamw_8bit"
   learning_rate: 2.0e-5
   weight_decay: 0.01
@@ -84,6 +84,5 @@ training:
 
 # SFT specific settings
 sft:
-  max_seq_length: 512  # Reduced from 2048 to prevent OOM
-  packing: false  # Set to true for efficiency with short sequences
+  max_seq_length: 1024  # Reduced from 2048 to prevent OOM
   dataset_text_field: "text"  # Field after formatting
