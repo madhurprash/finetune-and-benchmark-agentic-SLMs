@@ -17,8 +17,38 @@ from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     TrainingArguments,
+    TrainerCallback,
+    TrainerControl,
+    TrainerState,
 )
 from pathlib import Path
+
+
+class LossThresholdCallback(TrainerCallback):
+    """
+    Callback that stops training when the loss falls below a specified threshold.
+    """
+    def __init__(self, loss_threshold: float = 0.1):
+        self.loss_threshold = loss_threshold
+        self.best_loss = float('inf')
+
+    def on_log(self, args, state: TrainerState, control: TrainerControl, logs=None, **kwargs):
+        """
+        Called after logging the last logs.
+        """
+        if logs is not None and 'loss' in logs:
+            current_loss = logs['loss']
+            self.best_loss = min(self.best_loss, current_loss)
+
+            print(f"Current loss: {current_loss:.4f} | Best loss: {self.best_loss:.4f} | Threshold: {self.loss_threshold}")
+
+            if current_loss <= self.loss_threshold:
+                print(f"\nLoss threshold reached! Current loss ({current_loss:.4f}) <= threshold ({self.loss_threshold})")
+                print("Stopping training early...")
+                control.should_training_stop = True
+
+        return control
+
 
 def load_config(config_path="train.yaml"):
     """Load configuration from YAML file."""
@@ -223,15 +253,20 @@ def create_trainer(model, tokenizer, dataset, config):
         packing=False,  # Disable packing to avoid attention mask dimension issues with SDPA
     )
 
+    # Create loss threshold callback
+    loss_threshold = training_config.get('loss_threshold', 0.1)
+    loss_callback = LossThresholdCallback(loss_threshold=loss_threshold)
+
     # Create trainer
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         train_dataset=dataset,
-        processing_class=tokenizer
+        processing_class=tokenizer,
+        callbacks=[loss_callback]
     )
 
-    print("Trainer created successfully")
+    print(f"Trainer created successfully with loss threshold callback (threshold: {loss_threshold})")
     return trainer
 
 
@@ -255,6 +290,7 @@ def main():
     print(f"Learning rate: {config['training']['learning_rate']}")
     print(f"Epochs: {config['training']['num_train_epochs']}")
     print(f"Max steps: {config['training'].get('max_steps', 'Not set')}")
+    print(f"Loss threshold: {config['training'].get('loss_threshold', 0.1)}")
     print("=" * 80 + "\n")
 
     # Load model and tokenizer

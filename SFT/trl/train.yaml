@@ -4,7 +4,7 @@
 # Model configuration
 model:
   name: "mistralai/Devstral-Small-2-24B-Instruct-2512"
-  max_seq_length: 2048  # Increased from 2048 for better context, but capped to avoid 13k+ token sequences
+  max_seq_length: 4096  # Increased from 2048 for better context, but capped to avoid 13k+ token sequences
   trust_remote_code: true
   torch_dtype: "bfloat16"
   attn_implementation: "flash_attention_2"  # Options: "eager", "flash_attention_2", etc.
@@ -45,7 +45,7 @@ training:
     use_reentrant: false
 
   # Optimizer settings
-  max_steps: 100
+  max_steps: 5000
   optim: "adamw_8bit"
   learning_rate: 2.0e-5
   weight_decay: 0.01
@@ -75,5 +75,5 @@ training:
 
 # SFT specific settings
 sft:
-  max_seq_length: 2048  # Capped to avoid extremely long sequences (previously saw 13k+ tokens)
+  max_seq_length: 4096  # Capped to avoid extremely long sequences (previously saw 13k+ tokens)
   dataset_text_field: "text"  # Field after formatting
