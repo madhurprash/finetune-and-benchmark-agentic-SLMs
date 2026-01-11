@@ -16,6 +16,58 @@ This guide explains how to serve models with LoRA adapters using vLLM's OpenAI-c
 2. Start the server: `python serve.py`
 3. Make requests to `http://localhost:8000`
 
+## Prerequisites for Devstral Model
+
+When serving the Devstral model (especially with merged LoRA weights), you need specific versions of dependencies to avoid compatibility issues.
+
+### 1. Install vLLM Nightly
+
+The Devstral model card recommends vLLM nightly (or a build that includes the required commit).
+
+```bash
+# Install vLLM nightly wheels
+uv pip install -U vllm \
+  --torch-backend=auto \
+  --extra-index-url https://wheels.vllm.ai/nightly
+```
+
+### 2. Fix NumPy/Numba Compatibility
+
+You may encounter this error: `"Numba needs NumPy 2.2 or less. Got NumPy 2.4."`
+
+To fix this, pin NumPy to a Numba-compatible version (<2.3) and reinstall numba:
+
+```bash
+# Pin NumPy to a Numba-compatible version
+uv pip install -U "numpy<2.3" "numba"
+```
+
+This upper-bound constraint is enforced by numba and prevents the startup failure.
+
+### 3. Install Mistral Tooling
+
+Devstral's HuggingFace documentation explicitly requires mistral_common >= 1.8.6 for tool-call parsing:
+
+```bash
+uv pip install -U "mistral_common>=1.8.6"
+```
+
+### 4. Verify Installation
+
+Run these quick sanity checks to ensure everything is installed correctly:
+
+```bash
+python -c "import vllm; print('vllm', vllm.__version__)"
+python -c "import numpy, numba; print('numpy', numpy.__version__, 'numba', numba.__version__)"
+python -c "import mistral_common; print('mistral_common', mistral_common.__version__)"
+```
+
+Expected output:
+- vllm: should show a version with nightly build date
+- numpy: should show version < 2.3 (e.g., 2.2.x)
+- numba: should show latest compatible version
+- mistral_common: should show >= 1.8.6
+
 ## Configuration
 
 ### Base Model Configuration
@@ -346,6 +398,128 @@ Here's a complete workflow for serving a fine-tuned model:
 
    print(response.choices[0].message.content)
    ```
+
+## Testing and Verification
+
+### Verifying LoRA Adapter is Working
+
+The best way to verify that your LoRA adapter is working correctly and not interfering with base model requests is to monitor vLLM's Prometheus metrics while making requests.
+
+#### Setup: Monitor Metrics in Real-Time
+
+In one terminal, start watching the LoRA-specific metrics:
+
+```bash
+watch -n 0.2 'curl -s http://localhost:8000/metrics | egrep "vllm:lora_requests_info|running_lora_adapters|waiting_lora_adapters"'
+```
+
+This command polls the metrics endpoint every 0.2 seconds and filters for LoRA-related metrics:
+- `vllm:lora_requests_info`: Information about LoRA requests
+- `running_lora_adapters`: Currently active LoRA adapters
+- `waiting_lora_adapters`: Adapters waiting to be loaded
+
+#### Test 1: Base Model Request (No LoRA)
+
+In another terminal, send a long request to the base model:
+
+```bash
+curl -s http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mistralai/Devstral-Small-2-24B-Instruct-2512",
+    "messages": [{"role":"user","content":"Write a detailed 2500-token explanation of how to implement a bash-based CI pipeline, include many command examples."}],
+    "temperature": 0.0,
+    "max_tokens": 2500
+  }' > /dev/null
+```
+
+**Expected behavior:** In your metrics watch terminal, you should see:
+- `running_lora_adapters=""` (empty)
+- `waiting_lora_adapters=""` (empty)
+
+This confirms the base model is being used without any LoRA adapter.
+
+#### Test 2: LoRA Adapter Request
+
+Now send a long request using your LoRA adapter:
+
+```bash
+curl -s http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "devstral-sft-hf",
+    "messages": [{"role":"user","content":"Write a detailed 2500-token explanation of how to implement a bash-based CI pipeline, include many command examples."}],
+    "temperature": 0.0,
+    "max_tokens": 2500
+  }' > /dev/null
+```
+
+**Expected behavior:** In your metrics watch terminal, you should see:
+- `running_lora_adapters="devstral-sft-hf"` (your adapter name appears)
+- Request is being processed with the LoRA adapter active
+
+This confirms the LoRA adapter is loaded and being used for inference.
+
+#### Why Long Requests?
+
+We use requests with high `max_tokens` (2500) to ensure the request takes long enough to be visible in the metrics watch window. Short requests might complete before the next metrics poll, making them hard to observe.
+
+### Important Testing Notes
+
+1. **Run one request at a time**: Don't send both requests simultaneously, or you won't be able to clearly distinguish which adapter is active for which request.
+
+2. **Watch for interference**: The key verification is that base model requests show empty LoRA metrics while LoRA requests show the adapter name. This proves there's no interference between the two.
+
+3. **Model name must match config**: Ensure the model name in your request (e.g., `"devstral-sft-hf"`) exactly matches the key you used in `lora_modules` in your config.yaml.
+
+4. **Use `/dev/null` to hide response**: Redirecting output to `/dev/null` keeps your terminal clean and focused on the metrics watch window.
+
+### Common Gotchas
+
+#### Config Field Warnings
+
+You may see warnings in your server logs like:
+
+```
+The following fields were present in the config file but are not used: ...
+```
+
+This is normal and usually indicates that vLLM received some extra configuration fields that it doesn't recognize. These warnings can typically be ignored unless you're seeing actual functional issues.
+
+#### Adapter Not Showing in Metrics
+
+If you send a LoRA request but don't see the adapter name in metrics:
+
+1. Check that the adapter name in your request matches the config
+2. Verify the adapter loaded successfully at server startup (check logs)
+3. Ensure `enable_lora: true` is set in your config
+4. Confirm the request is actually reaching the server (check for errors)
+
+### Alternative Testing: Quick Request Test
+
+For a simpler test without metrics monitoring:
+
+```bash
+# Test base model
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mistralai/Devstral-Small-2-24B-Instruct-2512",
+    "messages": [{"role":"user","content":"Generate 800 tokens of bash commands to create a project skeleton."}],
+    "max_tokens": 800
+  }'
+
+# Test LoRA adapter
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "devstral-sft-hf",
+    "messages": [{"role":"user","content":"Generate 800 tokens of bash commands to create a project skeleton."}],
+    "max_tokens": 800
+  }'
+```
+
+Compare the responses to see if the LoRA adapter produces different (hopefully improved) output for your specific use case.
 
 ## Additional Resources
 
